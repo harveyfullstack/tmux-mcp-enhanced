@@ -464,6 +464,52 @@ server.resource(
   }
 );
 
+async function startMCPServer() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+async function startBackgroundTmuxMonitor() {
+  const checkInterval = 5000; // Check every 5 seconds
+  let lastKnownStatus = false;
+  
+  const checkTmux = async () => {
+    try {
+      const tmuxRunning = await tmux.isTmuxRunning();
+      
+      if (tmuxRunning !== lastKnownStatus) {
+        if (tmuxRunning) {
+          server.server.sendLoggingMessage({
+            level: 'info',
+            data: 'Tmux server detected and connected'
+          });
+        } else {
+          server.server.sendLoggingMessage({
+            level: 'warning',
+            data: 'Tmux server connection lost'
+          });
+        }
+        lastKnownStatus = tmuxRunning;
+      }
+    } catch (error) {
+      // Silently handle errors in background monitoring
+      if (lastKnownStatus) {
+        server.server.sendLoggingMessage({
+          level: 'warning',
+          data: 'Tmux server connection lost'
+        });
+        lastKnownStatus = false;
+      }
+    }
+    
+    // Schedule next check
+    setTimeout(checkTmux, checkInterval);
+  };
+  
+  // Start monitoring
+  checkTmux();
+}
+
 async function main() {
   try {
     const { values } = parseArgs({
@@ -477,27 +523,65 @@ async function main() {
       type: values['shell-type'] as string
     });
 
-    // Check if tmux is running
-    const tmuxRunning = await tmux.isTmuxRunning();
-    if (!tmuxRunning) {
+    // Start MCP server first - it can handle requests even if tmux isn't ready
+    try {
+      await startMCPServer();
       server.server.sendLoggingMessage({
-          level: 'error',
-          data: 'Tmux seems not running'
+        level: 'info',
+        data: 'MCP server started successfully'
       });
-
-      throw "Tmux server is not running";
+    } catch (error) {
+      console.error("Failed to start MCP server:", error);
+      // Log error but don't exit - try to continue
+      server.server.sendLoggingMessage({
+        level: 'error',
+        data: `MCP server startup failed: ${error}`
+      });
     }
 
-    // Start the MCP server
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // Check initial tmux status (no retries, just log)
+    try {
+      const tmuxRunning = await tmux.isTmuxRunning();
+      if (tmuxRunning) {
+        server.server.sendLoggingMessage({
+          level: 'info',
+          data: 'Tmux server detected and ready'
+        });
+      } else {
+        server.server.sendLoggingMessage({
+          level: 'info',
+          data: 'Tmux server not currently running. Server will work with empty results and auto-connect when tmux becomes available.'
+        });
+      }
+    } catch (error) {
+      server.server.sendLoggingMessage({
+        level: 'info',
+        data: 'Tmux server not currently available. Server will work with empty results and auto-connect when tmux becomes available.'
+      });
+    }
+
+    // Start background monitoring for tmux availability
+    startBackgroundTmuxMonitor();
+
   } catch (error) {
-    console.error("Failed to start MCP server:", error);
-    process.exit(1);
+    console.error("Error during startup:", error);
+    server.server.sendLoggingMessage({
+      level: 'error',
+      data: `Startup error: ${error}`
+    });
+    // Don't exit - let the server continue running
   }
 }
 
 main().catch(error => {
-  console.error("Fatal error:", error);
-  process.exit(1);
+  console.error("Fatal error during main execution:", error);
+  // Log the error but don't exit - let the process continue
+  try {
+    server.server.sendLoggingMessage({
+      level: 'error',
+      data: `Fatal startup error: ${error}`
+    });
+  } catch (logError) {
+    console.error("Could not log error:", logError);
+  }
 });

@@ -59,6 +59,12 @@ export async function executeTmux(tmuxCommand: string): Promise<string> {
     const { stdout } = await exec(`tmux ${tmuxCommand}`);
     return stdout.trim();
   } catch (error: any) {
+    // Check if it's a tmux server not running error
+    if (error.message.includes('no server running') || 
+        error.message.includes('failed to connect to server') ||
+        error.message.includes('connection refused')) {
+      throw new Error(`Tmux server not available: ${error.message}`);
+    }
     throw new Error(`Failed to execute tmux command: ${error.message}`);
   }
 }
@@ -79,20 +85,28 @@ export async function isTmuxRunning(): Promise<boolean> {
  * List all tmux sessions
  */
 export async function listSessions(): Promise<TmuxSession[]> {
-  const format = "#{session_id}:#{session_name}:#{?session_attached,1,0}:#{session_windows}";
-  const output = await executeTmux(`list-sessions -F '${format}'`);
+  try {
+    const format = "#{session_id}:#{session_name}:#{?session_attached,1,0}:#{session_windows}";
+    const output = await executeTmux(`list-sessions -F '${format}'`);
 
-  if (!output) return [];
+    if (!output) return [];
 
-  return output.split('\n').map(line => {
-    const [id, name, attached, windows] = line.split(':');
-    return {
-      id,
-      name,
-      attached: attached === '1',
-      windows: parseInt(windows, 10)
-    };
-  });
+    return output.split('\n').map(line => {
+      const [id, name, attached, windows] = line.split(':');
+      return {
+        id,
+        name,
+        attached: attached === '1',
+        windows: parseInt(windows, 10)
+      };
+    });
+  } catch (error: any) {
+    // If tmux is not available, return empty array instead of throwing
+    if (error.message.includes('Tmux server not available')) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 /**
@@ -111,47 +125,71 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
  * List windows in a session
  */
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
-  const format = "#{window_id}:#{window_name}:#{?window_active,1,0}";
-  const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
+  try {
+    const format = "#{window_id}:#{window_name}:#{?window_active,1,0}";
+    const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
 
-  if (!output) return [];
+    if (!output) return [];
 
-  return output.split('\n').map(line => {
-    const [id, name, active] = line.split(':');
-    return {
-      id,
-      name,
-      active: active === '1',
-      sessionId
-    };
-  });
+    return output.split('\n').map(line => {
+      const [id, name, active] = line.split(':');
+      return {
+        id,
+        name,
+        active: active === '1',
+        sessionId
+      };
+    });
+  } catch (error: any) {
+    // If tmux is not available, return empty array instead of throwing
+    if (error.message.includes('Tmux server not available')) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 /**
  * List panes in a window
  */
 export async function listPanes(windowId: string): Promise<TmuxPane[]> {
-  const format = "#{pane_id}:#{pane_title}:#{?pane_active,1,0}";
-  const output = await executeTmux(`list-panes -t '${windowId}' -F '${format}'`);
+  try {
+    const format = "#{pane_id}:#{pane_title}:#{?pane_active,1,0}";
+    const output = await executeTmux(`list-panes -t '${windowId}' -F '${format}'`);
 
-  if (!output) return [];
+    if (!output) return [];
 
-  return output.split('\n').map(line => {
-    const [id, title, active] = line.split(':');
-    return {
-      id,
-      windowId,
-      title: title,
-      active: active === '1'
-    };
-  });
+    return output.split('\n').map(line => {
+      const [id, title, active] = line.split(':');
+      return {
+        id,
+        windowId,
+        title: title,
+        active: active === '1'
+      };
+    });
+  } catch (error: any) {
+    // If tmux is not available, return empty array instead of throwing
+    if (error.message.includes('Tmux server not available')) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 /**
  * Capture content from a specific pane, by default the latest 200 lines.
  */
 export async function capturePaneContent(paneId: string, lines: number = 200): Promise<string> {
-  return executeTmux(`capture-pane -p -t '${paneId}' -S -${lines} -E -`);
+  try {
+    return await executeTmux(`capture-pane -p -t '${paneId}' -S -${lines} -E -`);
+  } catch (error: any) {
+    // If tmux is not available, return informative message instead of throwing
+    if (error.message.includes('Tmux server not available')) {
+      return 'Tmux server is not available. Cannot capture pane content.';
+    }
+    throw error;
+  }
 }
 
 /**
@@ -182,21 +220,20 @@ export async function executeCommand(paneId: string, command: string): Promise<s
   // Generate unique ID for this command execution
   const commandId = uuidv4();
 
-  const endMarkerText = getEndMarkerText();
-
-  const fullCommand = `echo "${startMarkerText}"; ${command}; echo "${endMarkerText}"`;
-
-  // Store command in tracking map
+  // Store command in tracking map with initial capture of pane content
+  const initialContent = await capturePaneContent(paneId, 50);
+  
   activeCommands.set(commandId, {
     id: commandId,
     paneId,
     command,
     status: 'pending',
-    startTime: new Date()
+    startTime: new Date(),
+    result: initialContent // Store initial state for comparison
   });
 
-  // Send the command to the tmux pane
-  await executeTmux(`send-keys -t '${paneId}' '${fullCommand.replace(/'/g, "'\\''")}' Enter`);
+  // Execute the command cleanly - just send it directly
+  await executeTmux(`send-keys -t '${paneId}' '${command.replace(/'/g, "'\\''")}' Enter`);
 
   return commandId;
 }
@@ -207,36 +244,42 @@ export async function checkCommandStatus(commandId: string): Promise<CommandExec
 
   if (command.status !== 'pending') return command;
 
-  const content = await capturePaneContent(command.paneId, 1000);
-
-  // Find the last occurrence of the markers
-  const startIndex = content.lastIndexOf(startMarkerText);
-  const endIndex = content.lastIndexOf(endMarkerPrefix);
-
-  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
-    command.result = "Command output could not be captured properly";
+  try {
+    // Get current pane content
+    const currentContent = await capturePaneContent(command.paneId, 1000);
+    
+    // Simple heuristic: if content has changed significantly and there's a new prompt,
+    // assume the command has completed
+    const initialContent = command.result || '';
+    
+    // Check if we have a shell prompt at the end (indicating command completion)
+    // This is a simple heuristic - look for common prompt patterns
+    const promptPatterns = [
+      /\$\s*$/,           // bash/zsh prompt ending with $
+      />\s*$/,            // fish prompt ending with >
+      /#\s*$/,            // root prompt ending with #
+      /\%\s*$/,           // zsh prompt ending with %
+    ];
+    
+    const hasPrompt = promptPatterns.some(pattern => pattern.test(currentContent));
+    const contentChanged = currentContent !== initialContent;
+    
+    // If content changed and we see a prompt, consider command completed
+    if (contentChanged && hasPrompt) {
+      // Check if enough time has passed (at least 500ms) to avoid false positives
+      const timeSinceStart = Date.now() - command.startTime.getTime();
+      if (timeSinceStart > 500) {
+        command.status = 'completed';
+        command.exitCode = 0; // We can't reliably determine exit code without markers
+        command.result = currentContent;
+        
+        // Update in map
+        activeCommands.set(commandId, command);
+      }
+    }
+  } catch (error) {
+    // If we can't check the pane, assume command is still running
     return command;
-  }
-
-  // Extract exit code from the end marker line
-  const endLine = content.substring(endIndex).split('\n')[0];
-  const endMarkerRegex = new RegExp(`${endMarkerPrefix}(\\d+)`);
-  const exitCodeMatch = endLine.match(endMarkerRegex);
-
-  if (exitCodeMatch) {
-    const exitCode = parseInt(exitCodeMatch[1], 10);
-
-    command.status = exitCode === 0 ? 'completed' : 'error';
-    command.exitCode = exitCode;
-
-    // Extract output between the start and end markers
-    const outputStart = startIndex + startMarkerText.length;
-    const outputContent = content.substring(outputStart, endIndex).trim();
-
-    command.result = outputContent.substring(outputContent.indexOf('\n') + 1).trim();
-
-    // Update in map
-    activeCommands.set(commandId, command);
   }
 
   return command;
