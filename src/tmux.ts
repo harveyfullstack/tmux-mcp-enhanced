@@ -393,6 +393,9 @@ function convertToTmuxKeys(input: string): string[] {
       case '\r': // Carriage return
         keys.push('Enter');
         break;
+      case ' ': // Space
+        keys.push('Space');
+        break;
       default:
         // Regular character - escape single quotes for tmux
         if (char === "'") {
