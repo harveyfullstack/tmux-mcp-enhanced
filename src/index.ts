@@ -417,9 +417,9 @@ server.resource(
     // For each pane, create a resource with descriptive name
     for (const pane of panes) {
     paneResources.push({
-      name: `Pane: ${session.name} - ${pane.id} - ${pane.title} ${pane.active ? "(active)" : ""}`,
+      name: `Pane: ${session.name} - ${pane.index}`,
         uri: `tmux://pane/${pane.id}`,
-          description: `Content from pane ${pane.id} - ${pane.title} in session ${session.name}`
+          description: `Content from pane ${pane.index} in session ${session.name}`
           });
          }
      }

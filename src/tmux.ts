@@ -90,6 +90,7 @@ export interface TmuxWindow {
 
 export interface TmuxPane {
   id: string;
+  index: number;
   windowId: string;
   active: boolean;
   title: string;
@@ -224,15 +225,16 @@ export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
  */
 export async function listPanes(windowId: string): Promise<TmuxPane[]> {
   try {
-    const format = "#{pane_id}:#{pane_title}:#{?pane_active,1,0}";
+    const format = "#{pane_id}:#{pane_index}:#{pane_title}:#{?pane_active,1,0}";
     const output = await executeTmux(`list-panes -t '${windowId}' -F '${format}'`);
 
     if (!output) return [];
 
     return output.split('\n').map(line => {
-      const [id, title, active] = line.split(':');
+      const [id, index, title, active] = line.split(':');
       return {
         id,
+        index: parseInt(index, 10),
         windowId,
         title: title,
         active: active === '1'
@@ -282,12 +284,12 @@ export async function captureAllPanesInWindow(windowId: string, lines: number = 
         const content = await capturePaneContent(pane.id, lines);
         
         // Create separator with pane information
-        const separator = `\n=== PANE ${pane.id} (${pane.title}) ${pane.active ? '[ACTIVE]' : ''} ===\n`;
+        const separator = `\n=== PANE ${pane.index} ===\n`;
         capturedContent.push(separator + content);
         
       } catch (error: any) {
         // If individual pane capture fails, include error message
-        const separator = `\n=== PANE ${pane.id} (${pane.title}) ${pane.active ? '[ACTIVE]' : ''} ===\n`;
+        const separator = `\n=== PANE ${pane.index} ===\n`;
         capturedContent.push(separator + `Error capturing pane: ${error.message}`);
       }
     }
@@ -334,6 +336,52 @@ function convertToTmuxKeys(input: string): string[] {
   const keys: string[] = [];
   let i = 0;
   
+  // First, check if the entire input is a special key name
+  const specialKeys: { [key: string]: string } = {
+    'Enter': 'Enter',
+    'Return': 'Enter',
+    'Tab': 'Tab',
+    'Escape': 'Escape',
+    'Esc': 'Escape',
+    'Space': 'Space',
+    'Backspace': 'BSpace',
+    'BSpace': 'BSpace',
+    'Delete': 'Delete',
+    'Del': 'Delete',
+    'Up': 'Up',
+    'Down': 'Down',
+    'Left': 'Left',
+    'Right': 'Right',
+    'Home': 'Home',
+    'End': 'End',
+    'PageUp': 'PPage',
+    'PageDown': 'NPage',
+    'PgUp': 'PPage',
+    'PgDn': 'NPage',
+    'Insert': 'IC',
+    'F1': 'F1',
+    'F2': 'F2',
+    'F3': 'F3',
+    'F4': 'F4',
+    'F5': 'F5',
+    'F6': 'F6',
+    'F7': 'F7',
+    'F8': 'F8',
+    'F9': 'F9',
+    'F10': 'F10',
+    'F11': 'F11',
+    'F12': 'F12'
+  };
+  
+  // Check if the entire input matches a special key (case-insensitive)
+  const inputLower = input.toLowerCase();
+  const inputKey = Object.keys(specialKeys).find(key => key.toLowerCase() === inputLower);
+  if (inputKey) {
+    keys.push(specialKeys[inputKey]);
+    return keys;
+  }
+  
+  // If not a special key name, process character by character
   while (i < input.length) {
     const char = input[i];
     const nextChar = input[i + 1];
