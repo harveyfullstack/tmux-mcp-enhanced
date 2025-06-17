@@ -4,6 +4,75 @@ import { v4 as uuidv4 } from 'uuid';
 
 const exec = promisify(execCallback);
 
+// Command queue for reliable execution
+interface QueuedCommand {
+  id: string;
+  command: string;
+  resolve: (value: string) => void;
+  reject: (error: Error) => void;
+  timestamp: number;
+}
+
+class TmuxCommandQueue {
+  private queue: QueuedCommand[] = [];
+  private isProcessing = false;
+  private lastExecutionTime = 0;
+  private readonly minInterval = 10; // Minimum 10ms between commands
+
+  async enqueue(tmuxCommand: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const queuedCommand: QueuedCommand = {
+        id: uuidv4(),
+        command: tmuxCommand,
+        resolve,
+        reject,
+        timestamp: Date.now()
+      };
+
+      this.queue.push(queuedCommand);
+      this.processQueue();
+    });
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isProcessing || this.queue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    while (this.queue.length > 0) {
+      const command = this.queue.shift()!;
+      
+      try {
+        // Ensure minimum interval between commands
+        const timeSinceLastExecution = Date.now() - this.lastExecutionTime;
+        if (timeSinceLastExecution < this.minInterval) {
+          await new Promise(resolve => setTimeout(resolve, this.minInterval - timeSinceLastExecution));
+        }
+
+        const { stdout } = await exec(`tmux ${command.command}`);
+        this.lastExecutionTime = Date.now();
+        command.resolve(stdout.trim());
+      } catch (error: any) {
+        command.reject(new Error(`Failed to execute tmux command: ${error.message}`));
+      }
+    }
+
+    this.isProcessing = false;
+  }
+
+  getQueueLength(): number {
+    return this.queue.length;
+  }
+
+  isQueueProcessing(): boolean {
+    return this.isProcessing;
+  }
+}
+
+const commandQueue = new TmuxCommandQueue();
+
 // Basic interfaces for tmux objects
 export interface TmuxSession {
   id: string;
@@ -53,11 +122,12 @@ export function setShellConfig(config: { type: string }): void {
 
 /**
  * Execute a tmux command and return the result
+ * Uses a queue to ensure reliable execution when commands overlap
  */
 export async function executeTmux(tmuxCommand: string): Promise<string> {
   try {
-    const { stdout } = await exec(`tmux ${tmuxCommand}`);
-    return stdout.trim();
+    const result = await commandQueue.enqueue(tmuxCommand);
+    return result;
   } catch (error: any) {
     // Check if it's a tmux server not running error
     if (error.message.includes('no server running') || 
@@ -418,4 +488,5 @@ function getEndMarkerText(): string {
     ? `${endMarkerPrefix}$status`
     : `${endMarkerPrefix}$?`;
 }
+
 

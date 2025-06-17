@@ -335,6 +335,7 @@ server.tool(
   }
 );
 
+
 // Expose tmux session list as a resource
 server.resource(
   "Tmux Sessions",
