@@ -164,6 +164,37 @@ server.tool(
   }
 );
 
+// Capture all panes in a window - Tool
+server.tool(
+  "capture-all-panes",
+  "Capture content from all panes in a tmux window and stitch them together with clear separators",
+  {
+    windowId: z.string().describe("ID of the tmux window"),
+    lines: z.string().optional().describe("Number of lines to capture from each pane")
+  },
+  async ({ windowId, lines }) => {
+    try {
+      // Parse lines parameter if provided
+      const linesCount = lines ? parseInt(lines, 10) : undefined;
+      const content = await tmux.captureAllPanesInWindow(windowId, linesCount);
+      return {
+        content: [{
+          type: "text",
+          text: content || "No content captured"
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error capturing all panes content: ${error}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
 // Create new session - Tool
 server.tool(
   "create-session",

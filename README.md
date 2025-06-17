@@ -64,6 +64,7 @@ The MCP server needs to know the shell only when executing commands, to properly
 - `list-windows` - List windows in a tmux session
 - `list-panes` - List panes in a tmux window
 - `capture-pane` - Capture content from a tmux pane
+- `capture-all-panes` - Capture content from all panes in a tmux window with separators
 - `create-session` - Create a new tmux session
 - `create-window` - Create a new window in a tmux session
 - `execute-command` - Execute a command in a tmux pane

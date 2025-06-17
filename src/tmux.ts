@@ -263,6 +263,48 @@ export async function capturePaneContent(paneId: string, lines: number = 200): P
 }
 
 /**
+ * Capture content from all panes in a window and stitch them together with separators
+ */
+export async function captureAllPanesInWindow(windowId: string, lines: number = 200): Promise<string> {
+  try {
+    // Get all panes in the window
+    const panes = await listPanes(windowId);
+    
+    if (panes.length === 0) {
+      return 'No panes found in the specified window.';
+    }
+
+    const capturedContent: string[] = [];
+    
+    // Capture content from each pane
+    for (const pane of panes) {
+      try {
+        const content = await capturePaneContent(pane.id, lines);
+        
+        // Create separator with pane information
+        const separator = `\n=== PANE ${pane.id} (${pane.title}) ${pane.active ? '[ACTIVE]' : ''} ===\n`;
+        capturedContent.push(separator + content);
+        
+      } catch (error: any) {
+        // If individual pane capture fails, include error message
+        const separator = `\n=== PANE ${pane.id} (${pane.title}) ${pane.active ? '[ACTIVE]' : ''} ===\n`;
+        capturedContent.push(separator + `Error capturing pane: ${error.message}`);
+      }
+    }
+    
+    // Join all pane contents with a final separator
+    return capturedContent.join('\n--- END OF PANE ---\n') + '\n--- END OF WINDOW ---\n';
+    
+  } catch (error: any) {
+    // If tmux is not available, return informative message instead of throwing
+    if (error.message.includes('Tmux server not available')) {
+      return 'Tmux server is not available. Cannot capture pane content.';
+    }
+    throw error;
+  }
+}
+
+/**
  * Create a new tmux session
  */
 export async function createSession(name: string): Promise<TmuxSession | null> {
