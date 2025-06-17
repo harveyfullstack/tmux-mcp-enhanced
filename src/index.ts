@@ -306,6 +306,35 @@ server.tool(
   }
 );
 
+// Send raw keys to pane - Tool
+server.tool(
+  "send-raw-keys",
+  "Send raw keys/control characters to a tmux pane (useful for Ctrl+C, arrow keys, etc.)",
+  {
+    paneId: z.string().describe("ID of the tmux pane"),
+    keys: z.string().describe("Keys to send (supports control characters like ^C for Ctrl+C, or raw control codes)")
+  },
+  async ({ paneId, keys }) => {
+    try {
+      await tmux.sendRawKeys(paneId, keys);
+      return {
+        content: [{
+          type: "text",
+          text: `Keys sent to pane ${paneId}: ${keys}`
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Error sending keys: ${error}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
 // Expose tmux session list as a resource
 server.resource(
   "Tmux Sessions",

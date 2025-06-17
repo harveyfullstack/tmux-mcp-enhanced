@@ -215,6 +215,87 @@ const activeCommands = new Map<string, CommandExecution>();
 const startMarkerText = 'TMUX_MCP_START';
 const endMarkerPrefix = "TMUX_MCP_DONE_";
 
+/**
+ * Convert control characters and special keys to tmux key notation
+ */
+function convertToTmuxKeys(input: string): string[] {
+  const keys: string[] = [];
+  let i = 0;
+  
+  while (i < input.length) {
+    const char = input[i];
+    const nextChar = input[i + 1];
+    
+    // Handle Ctrl+ combinations (^C, ^D, etc.)
+    if (char === '^' && nextChar) {
+      const ctrlChar = nextChar.toUpperCase();
+      keys.push(`C-${ctrlChar.toLowerCase()}`);
+      i += 2;
+      continue;
+    }
+    
+    // Handle common control sequences
+    switch (char) {
+      case '\x03': // Ctrl+C
+        keys.push('C-c');
+        break;
+      case '\x04': // Ctrl+D
+        keys.push('C-d');
+        break;
+      case '\x1a': // Ctrl+Z
+        keys.push('C-z');
+        break;
+      case '\x12': // Ctrl+R
+        keys.push('C-r');
+        break;
+      case '\x0c': // Ctrl+L
+        keys.push('C-l');
+        break;
+      case '\x15': // Ctrl+U
+        keys.push('C-u');
+        break;
+      case '\x0b': // Ctrl+K
+        keys.push('C-k');
+        break;
+      case '\x01': // Ctrl+A
+        keys.push('C-a');
+        break;
+      case '\x05': // Ctrl+E
+        keys.push('C-e');
+        break;
+      case '\x08': // Backspace
+        keys.push('BSpace');
+        break;
+      case '\x7f': // Delete
+        keys.push('Delete');
+        break;
+      case '\x1b': // Escape
+        keys.push('Escape');
+        break;
+      case '\t': // Tab
+        keys.push('Tab');
+        break;
+      case '\n': // Enter
+        keys.push('Enter');
+        break;
+      case '\r': // Carriage return
+        keys.push('Enter');
+        break;
+      default:
+        // Regular character - escape single quotes for tmux
+        if (char === "'") {
+          keys.push("\"'\"");
+        } else {
+          keys.push(char);
+        }
+        break;
+    }
+    i++;
+  }
+  
+  return keys;
+}
+
 // Execute a command in a tmux pane and track its execution
 export async function executeCommand(paneId: string, command: string): Promise<string> {
   // Generate unique ID for this command execution
@@ -232,10 +313,34 @@ export async function executeCommand(paneId: string, command: string): Promise<s
     result: initialContent // Store initial state for comparison
   });
 
-  // Execute the command cleanly - just send it directly
-  await executeTmux(`send-keys -t '${paneId}' '${command.replace(/'/g, "'\\''")}' Enter`);
+  // Convert command to proper tmux key notation
+  const tmuxKeys = convertToTmuxKeys(command);
+  
+  // Send each key/sequence individually for proper handling
+  for (const key of tmuxKeys) {
+    await executeTmux(`send-keys -t '${paneId}' ${key}`);
+  }
+  
+  // Send Enter to execute (unless the command already ended with Enter)
+  if (!command.endsWith('\n') && !command.endsWith('\r')) {
+    await executeTmux(`send-keys -t '${paneId}' Enter`);
+  }
 
   return commandId;
+}
+
+/**
+ * Send raw keys/control characters to a tmux pane without tracking
+ * This is useful for sending Ctrl+C, arrow keys, etc. to interactive applications
+ */
+export async function sendRawKeys(paneId: string, keys: string): Promise<void> {
+  // Convert the input to tmux key notation
+  const tmuxKeys = convertToTmuxKeys(keys);
+  
+  // Send each key/sequence individually
+  for (const key of tmuxKeys) {
+    await executeTmux(`send-keys -t '${paneId}' ${key}`);
+  }
 }
 
 export async function checkCommandStatus(commandId: string): Promise<CommandExecution | null> {
